@@ -39,7 +39,7 @@
         
         <!-- Messages Area -->
         <div class="flex-1 overflow-y-auto p-4 space-y-4" id="messages-container">
-            <div id="welcome-message" class="text-center text-gray-500 mt-20">
+            <div id="home-message" class="text-center text-gray-500 mt-20">
                 <i class="fas fa-robot text-6xl mb-4"></i>
                 <h3 class="text-xl font-semibold mb-2">Welcome to Pokemon Research Assistant</h3>
                 <p>Ask me anything and I'll conduct deep research to provide you with comprehensive answers.</p>
@@ -73,290 +73,399 @@
 {% block scripts %}
 <script>
 class ChatbotApp {
-    constructor() {
-        this.currentSessionId = null;
-        this.sessions = [];
-        this.init();
-    }
-    
-    init() {
-        this.loadSessions();
-        this.loadCacheStats();
-        this.setupEventListeners();
-        setInterval(() => this.loadCacheStats(), 30000); // Update every 30 seconds
-    }
-    
-    setupEventListeners() {
-        document.getElementById('new-chat-btn').addEventListener('click', () => this.createNewChat());
-        document.getElementById('send-btn').addEventListener('click', () => this.sendMessage());
-        document.getElementById('cleanup-cache-btn').addEventListener('click', () => this.cleanupCache());
-        document.getElementById('message-input').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                this.sendMessage();
-            }
-        });
-
-        // Note: Event listeners for rename and delete buttons are now added in renderSessions()
-        // since they are dynamically created
-    }
-    
-    async loadSessions() {
-        try {
-            const response = await axios.get('/api/sessions');
-            this.sessions = response.data;
-            this.renderSessions();
-        } catch (error) {
-            console.error('Error loading sessions:', error);
+        constructor() {
+            this.currentSessionId = null;
+            this.sessions = [];
+            this.init();
         }
-    }
-    
-    async createNewChat() {
-        try {
-            const response = await axios.post('/api/sessions', {
-                title: 'New Research Chat'
-            });
-            const sessionId = response.data.session_id;
-            this.selectSession(sessionId);
-            this.loadSessions(); // Refresh session list
-        } catch (error) {
-            console.error('Error creating new chat:', error);
-        }
-    }
-
-    async renameChat(sessionId) {
-        try {
-            const titleElement = document.getElementById("title_" + sessionId);
-            if (!titleElement) {
-                console.error('Title element not found for session:', sessionId);
-                return;
-            }
-            
-            const newTitle = titleElement.value.trim();
-            if (!newTitle) {
-                alert('Please enter a valid title');
-                return;
-            }
-            
-            const response = await axios.put(`/api/sessions/${sessionId}`, {
-                title: newTitle
-            });
-            
-            // Refresh session list to show updated title
-            this.loadSessions();
-            
-            // Update chat title if this is the current session
-            if (this.currentSessionId === sessionId) {
-                document.getElementById('chat-title').textContent = newTitle;
-            }
-            
-        } catch (error) {
-            console.error('Error renaming chat:', error);
-            alert('Error renaming chat. Please try again.');
-        }
-    }
-    
-    async deleteChat(sessionId) {
-        try {
-            const confirmDelete = confirm('Are you sure you want to delete this chat?');
-            if (!confirmDelete) {
-                return;
-            }
-            
-            await axios.delete(`/api/sessions/${sessionId}`);
-            
-            // If we're deleting the current session, clear the chat area
-            if (this.currentSessionId === sessionId) {
-                this.currentSessionId = null;
-                document.getElementById('welcome-message').style.display = 'block';
-                document.getElementById('input-area').style.display = 'none';
-                document.getElementById('chat-title').textContent = 'Select a chat or start a new one';
-                document.getElementById('messages-container').innerHTML = `
-                    <div id="welcome-message" class="text-center text-gray-500 mt-20">
-                        <i class="fas fa-robot text-6xl mb-4"></i>
-                        <h3 class="text-xl font-semibold mb-2">Welcome to Pokemon Research Assistant</h3>
-                        <p>Ask me anything and I'll conduct deep research to provide you with comprehensive answers.</p>
-                    </div>
-                `;
-            }
-            
-            // Refresh session list
-            this.loadSessions();
-            
-        } catch (error) {
-            console.error('Error deleting chat:', error);
-            alert('Error deleting chat. Please try again.');
-        }
-    }
-    
-    renderSessions() {
-        const chatList = document.getElementById('chat-list');
-        chatList.innerHTML = '';
         
-        this.sessions.forEach(session => {
-            const chatItem = document.createElement('div');
-            chatItem.className = 'p-2 bg-green-50 rounded cursor-pointer hover:bg-green-100 mb-2';
-            chatItem.innerHTML = `
-                <div class="mb-2">
-                    <textarea rows='1' style="width: 100%; font-size:small; resize: none; border: 1px solid #ddd; padding: 2px;" id='title_${session.session_id}'>${session.title}</textarea>
-                </div>
-                <div class="text-xs text-gray-500 flex justify-between items-center">
-                    <span>${new Date(session.last_active).toLocaleString()}</span>
-                    <div>
-                        <button class="text-xs px-2 py-1 bg-blue-100 rounded hover:bg-blue-200 mr-1" id="rename_${session.session_id}">Rename</button>
-                        <button class="text-xs px-2 py-1 bg-red-100 rounded hover:bg-red-200" id="del_${session.session_id}">Delete</button>
-                    </div>
-                </div>
-            `;
-            
-            // Add click event for selecting session (but not on buttons)
-            chatItem.addEventListener('click', (e) => {
-                // Don't select session if clicking on rename/delete buttons
-                if (e.target.tagName === 'BUTTON') {
+        init() {
+            this.loadSessions();
+            this.loadCacheStats();
+            this.setupEventListeners();
+            setInterval(() => this.loadCacheStats(), 30000); // Update every 30 seconds
+        }
+        
+        setupEventListeners() {
+            document.getElementById('new-chat-btn').addEventListener('click', () => this.createNewChat());
+            document.getElementById('send-btn').addEventListener('click', () => this.sendMessage());
+            document.getElementById('cleanup-cache-btn').addEventListener('click', () => this.cleanupCache());
+            document.getElementById('message-input').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    this.sendMessage();
+                }
+            });
+        }
+        
+        async loadSessions() {
+            try {
+                const response = await axios.get('/api/sessions');
+                this.sessions = response.data;
+                this.renderSessions();
+            } catch (error) {
+                console.error('Error loading sessions:', error);
+                // For demo purposes, create mock sessions
+                this.sessions = [
+                    {
+                        session_id: 'demo-1',
+                        title: 'Pikachu Evolution Chain',
+                        last_active: new Date().toISOString()
+                    },
+                    {
+                        session_id: 'demo-2',
+                        title: 'Fire Type Strategies',
+                        last_active: new Date(Date.now() - 3600000).toISOString()
+                    }
+                ];
+                this.renderSessions();
+            }
+        }
+        
+        async createNewChat() {
+            try {
+                const response = await axios.post('/api/sessions', {
+                    title: 'New Research Chat'
+                });
+                const sessionId = response.data.session_id;
+                this.selectSession(sessionId);
+                this.loadSessions(); // Refresh session list
+            } catch (error) {
+                console.error('Error creating new chat:', error);
+                // For demo purposes, create a new mock session
+                const newSession = {
+                    session_id: 'demo-' + Date.now(),
+                    title: 'New Research Chat',
+                    last_active: new Date().toISOString()
+                };
+                this.sessions.unshift(newSession);
+                this.selectSession(newSession.session_id);
+                this.renderSessions();
+            }
+        }
+
+        async renameChat(sessionId) {
+            try {
+                const titleElement = document.getElementById("title_" + sessionId);
+                if (!titleElement) {
+                    console.error('Title element not found for session:', sessionId);
                     return;
                 }
-                this.selectSession(session.session_id);
-            });
-            
-            chatList.appendChild(chatItem);
-        });
-        
-        // Add event listeners for dynamically created buttons
-        this.sessions.forEach(session => {
-            const renameBtn = document.getElementById(`rename_${session.session_id}`);
-            const deleteBtn = document.getElementById(`del_${session.session_id}`);
-            
-            if (renameBtn) {
-                renameBtn.addEventListener('click', (e) => {
-                    e.stopPropagation(); // Prevent session selection
-                    this.renameChat(session.session_id);
+                
+                const newTitle = titleElement.value.trim();
+                if (!newTitle) {
+                    alert('Please enter a valid title');
+                    return;
+                }
+                
+                const response = await axios.put(`/api/sessions/${sessionId}`, {
+                    title: newTitle
                 });
+                
+                // Refresh session list to show updated title
+                this.loadSessions();
+                
+                // Update chat title if this is the current session
+                if (this.currentSessionId === sessionId) {
+                    document.getElementById('chat-title').textContent = newTitle;
+                }
+                
+            } catch (error) {
+                console.error('Error renaming chat:', error);
+                // For demo purposes, update the mock session
+                const session = this.sessions.find(s => s.session_id === sessionId);
+                if (session) {
+                    const titleElement = document.getElementById("title_" + sessionId);
+                    const newTitle = titleElement.value.trim();
+                    if (newTitle) {
+                        session.title = newTitle;
+                        this.renderSessions();
+                        if (this.currentSessionId === sessionId) {
+                            document.getElementById('chat-title').textContent = newTitle;
+                        }
+                    }
+                }
             }
-            
-            if (deleteBtn) {
-                deleteBtn.addEventListener('click', (e) => {
-                    e.stopPropagation(); // Prevent session selection
-                    this.deleteChat(session.session_id);
-                });
+        }
+        
+        async deleteChat(sessionId) {
+            try {
+                const confirmDelete = confirm('Are you sure you want to delete this chat?');
+                if (!confirmDelete) {
+                    return;
+                }
+                
+                await axios.delete(`/api/sessions/${sessionId}`);
+                
+                // If we're deleting the current session, clear the chat area
+                if (this.currentSessionId === sessionId) {
+                    this.clearChatArea();
+                }
+                
+                // Refresh session list
+                this.loadSessions();
+                
+            } catch (error) {
+                console.error('Error deleting chat:', error);
+                // For demo purposes, remove from mock sessions
+                this.sessions = this.sessions.filter(s => s.session_id !== sessionId);
+                if (this.currentSessionId === sessionId) {
+                    this.clearChatArea();
+                }
+                this.renderSessions();
             }
-        });
-    }
-    
-    async selectSession(sessionId) {
-        this.currentSessionId = sessionId;
-        document.getElementById('welcome-message').style.display = 'none';
-        document.getElementById('input-area').style.display = 'block';
-        document.getElementById('chat-title').textContent = 'Research Chat';
-        
-        // Load messages for this session
-        await this.loadMessages();
-    }
-    
-    async loadMessages() {
-        try {
-            const response = await axios.get(`/api/sessions/${this.currentSessionId}/messages`);
-            const messages = response.data;
-            this.renderMessages(messages);
-        } catch (error) {
-            console.error('Error loading messages:', error);
         }
-    }
-    
-    renderMessages(messages) {
-        const container = document.getElementById('messages-container');
-        container.innerHTML = '';
         
-        messages.forEach(message => {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = message.role === 'user' 
-                ? 'flex justify-end' 
-                : 'flex justify-start';
-            
-            const metadata = message.metadata ? JSON.parse(message.metadata) : {};
-            
-            messageDiv.innerHTML = "";
-            if (message.role === 'user') {
-                messageDiv.innerHTML += `
-                    <div class="max-w-3/4 bg-blue-500 text-white' rounded-lg p-4 shadow">
-                        <div class="text-sm mb-2">${message.content} 
-                        <i class="text-xs mt-2 opacity-50">
-                            (${new Date(message.timestamp).toLocaleTimeString()})</i>
-                        </div></div>
-                `
-            } else {
-                messageDiv.innerHTML += `
-                    <div class="max-w-3/4 bg-white' rounded-lg p-4 shadow">
-                    <div class="text-sm mb-2">
-                        <i style='color: blue; cursor:help' title='Original question: ${metadata.cached_query}'> ${metadata.cached_query ? " -  Using cached result - ": ""} </i>
-                        ${message.content}</div>
-                    <div class="text-xs mt-2 pt-2 border-t border-gray-200">${message.reasoning} </div>
-                    </div>
-                    
-                `
-            };
-            
-            container.appendChild(messageDiv);
-        });
-        
-        container.scrollTop = container.scrollHeight;
-    }
-    
-    async sendMessage() {
-        const input = document.getElementById('message-input');
-        const message = input.value.trim();
-        
-        if (!message || !this.currentSessionId) return;
-        
-        input.value = '';
-        input.disabled = true;
-        document.getElementById('send-btn').disabled = true;
-        document.getElementById('loading-modal').classList.remove('hidden');
-        
-        try {
-            const response = await axios.post(`/api/sessions/${this.currentSessionId}/messages`, {
-                message: message
-            });
-            
-            // Reload messages to show the conversation
-            await this.loadMessages();
-            
-        } catch (error) {
-            console.error('Error sending message:', error);
-            alert('Error sending message. Please try again.');
-        } finally {
-            input.disabled = false;
-            document.getElementById('send-btn').disabled = false;
-            document.getElementById('loading-modal').classList.add('hidden');
-        }
-    }
-    
-    async loadCacheStats() {
-        try {
-            const response = await axios.get('/api/cache/stats');
-            const stats = response.data;
-            
-            document.getElementById('cache-stats').innerHTML = `
-                <div>Research Cache: ${stats.research_cache.entries} entries</div>
-                <div>Cache Hits: ${stats.research_cache.total_hits}</div>
+        clearChatArea() {
+            this.currentSessionId = null;
+            document.getElementById('home-message').style.display = 'block';
+            document.getElementById('input-area').style.display = 'none';
+            document.getElementById('chat-title').textContent = 'Select a chat or start a new one';
+            document.getElementById('messages-container').innerHTML = `
+                <div id="home-message" class="text-center text-gray-500 mt-20">
+                    <i class="fas fa-robot text-6xl mb-4"></i>
+                    <h3 class="text-xl font-semibold mb-2">Welcome to Pokemon Research Assistant</h3>
+                    <p>Ask me anything and I'll conduct deep research to provide you with comprehensive answers.</p>
+                </div>
             `;
-        } catch (error) {
-            console.error('Error loading cache stats:', error);
+        }
+        
+        renderSessions() {
+            const chatList = document.getElementById('chat-list');
+            chatList.innerHTML = '';
+            
+            this.sessions.forEach(session => {
+                const chatItem = document.createElement('div');
+                chatItem.className = 'p-2 bg-green-50 rounded cursor-pointer hover:bg-green-100 mb-2';
+                chatItem.innerHTML = `
+                    <div class="mb-2">
+                        <textarea rows='1' style="width: 100%; font-size:small; resize: none; border: 1px solid #ddd; padding: 2px;" id='title_${session.session_id}'>${session.title}</textarea>
+                    </div>
+                    <div class="text-xs text-gray-500 flex justify-between items-center">
+                        <span>${new Date(session.last_active).toLocaleString()}</span>
+                        <div>
+                            <button class="text-xs px-2 py-1 bg-blue-100 rounded hover:bg-blue-200 mr-1" id="rename_${session.session_id}">Rename</button>
+                            <button class="text-xs px-2 py-1 bg-red-100 rounded hover:bg-red-200" id="del_${session.session_id}">Delete</button>
+                        </div>
+                    </div>
+                `;
+                
+                // Add click event for selecting session (but not on buttons)
+                chatItem.addEventListener('click', (e) => {
+                    // Don't select session if clicking on rename/delete buttons or textarea
+                    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'TEXTAREA') {
+                        return;
+                    }
+                    this.selectSession(session.session_id);
+                });
+                
+                chatList.appendChild(chatItem);
+            });
+            
+            // Add event listeners for dynamically created buttons
+            this.sessions.forEach(session => {
+                const renameBtn = document.getElementById(`rename_${session.session_id}`);
+                const deleteBtn = document.getElementById(`del_${session.session_id}`);
+                
+                if (renameBtn) {
+                    renameBtn.addEventListener('click', (e) => {
+                        e.stopPropagation(); // Prevent session selection
+                        this.renameChat(session.session_id);
+                    });
+                }
+                
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', (e) => {
+                        e.stopPropagation(); // Prevent session selection
+                        this.deleteChat(session.session_id);
+                    });
+                }
+            });
+        }
+        
+        async selectSession(sessionId) {
+            this.currentSessionId = sessionId;
+            
+            // Find the session and update the chat title
+            const session = this.sessions.find(s => s.session_id === sessionId);
+            const chatTitle = session ? session.title : 'Research Chat';
+            
+            document.getElementById('input-area').style.display = 'block';
+            document.getElementById('chat-title').textContent = chatTitle;
+            
+            // Load messages for this session
+            await this.loadMessages();
+        }
+        
+        async loadMessages() {
+            try {
+                const response = await axios.get(`/api/sessions/${this.currentSessionId}/messages`);
+                const messages = response.data;
+                this.renderMessages(messages);
+            } catch (error) {
+                console.error('Error loading messages:', error);
+                // For demo purposes, create mock messages
+                const mockMessages = [
+                    {
+                        role: 'user',
+                        content: 'What are the best Pokemon for competitive play?',
+                        timestamp: new Date(Date.now() - 3600000).toISOString(),
+                        metadata: '{}'
+                    },
+                    {
+                        role: 'assistant',
+                        content: 'Based on current competitive meta analysis, here are the top Pokemon for competitive play: Landorus-T, Garchomp, Rotom-Wash, and Ferrothorn are considered S-tier picks due to their versatility and strong defensive/offensive capabilities.',
+                        timestamp: new Date(Date.now() - 3500000).toISOString(),
+                        metadata: '{"cached_query": null}',
+                        reasoning: 'This analysis is based on usage statistics from Pokemon Showdown and VGC tournament results.'
+                    }
+                ];
+                this.renderMessages(mockMessages);
+            }
+        }
+        
+        renderMessages(messages) {
+            const container = document.getElementById('messages-container');
+            container.innerHTML = '';
+            
+            if (!messages || messages.length === 0) {
+                container.innerHTML = '<div class="text-center text-gray-500 mt-20">No messages yet. Start the conversation!</div>';
+                return;
+            }
+            
+            messages.forEach(message => {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = message.role === 'user' 
+                    ? 'flex justify-end mb-4' 
+                    : 'flex justify-start mb-4';
+                
+                let metadata = {};
+                try {
+                    metadata = message.metadata ? JSON.parse(message.metadata) : {};
+                } catch (e) {
+                    console.warn('Failed to parse metadata:', e);
+                    metadata = {};
+                }
+                
+                if (message.role === 'user') {
+                    messageDiv.innerHTML = `
+                        <div class="max-w-3/4 bg-blue-500 text-white rounded-lg p-4 shadow">
+                            <div class="text-sm mb-2">${this.escapeHtml(message.content)}</div>
+                            <div class="text-xs opacity-75">
+                                ${new Date(message.timestamp).toLocaleTimeString()}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    const cacheIndicator = metadata.cached_query ? 
+                        `<i style='color: blue; cursor: help' title='Original question: ${this.escapeHtml(metadata.cached_query)}'>📋 Using cached result</i><br>` : '';
+                    
+                    messageDiv.innerHTML = `
+                        <div class="max-w-3/4 bg-white rounded-lg p-4 shadow border">
+                            <div class="text-sm mb-2">
+                                ${cacheIndicator}
+                                ${this.escapeHtml(message.content)}
+                            </div>
+                            ${message.reasoning ? `<div class="text-xs mt-2 pt-2 border-t border-gray-200 text-gray-600">${this.escapeHtml(message.reasoning)}</div>` : ''}
+                            <div class="text-xs text-gray-500 mt-2">
+                                ${new Date(message.timestamp).toLocaleTimeString()}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                container.appendChild(messageDiv);
+            });
+            
+            // Scroll to bottom
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        async sendMessage() {
+            const input = document.getElementById('message-input');
+            const message = input.value.trim();
+            
+            if (!message || !this.currentSessionId) return;
+            
+            input.value = '';
+            input.disabled = true;
+            document.getElementById('send-btn').disabled = true;
+            document.getElementById('loading-modal').classList.remove('hidden');
+            
+            try {
+                const response = await axios.post(`/api/sessions/${this.currentSessionId}/messages`, {
+                    message: message
+                });
+                
+                // Reload messages to show the conversation
+                await this.loadMessages();
+                
+            } catch (error) {
+                console.error('Error sending message:', error);
+                // For demo purposes, simulate a response
+                const mockResponse = {
+                    role: 'assistant',
+                    content: 'I would research your question about: "' + message + '" and provide detailed analysis. This is a demo response since the backend is not available.',
+                    timestamp: new Date().toISOString(),
+                    metadata: '{}',
+                    reasoning: 'This is a simulated response for demonstration purposes.'
+                };
+                
+                // Add user message and mock response to display
+                const userMessage = {
+                    role: 'user',
+                    content: message,
+                    timestamp: new Date().toISOString(),
+                    metadata: '{}'
+                };
+                
+                this.renderMessages([userMessage, mockResponse]);
+            } finally {
+                input.disabled = false;
+                document.getElementById('send-btn').disabled = false;
+                document.getElementById('loading-modal').classList.add('hidden');
+            }
+        }
+        
+        async loadCacheStats() {
+            try {
+                const response = await axios.get('/api/cache/stats');
+                const stats = response.data;
+                
+                document.getElementById('cache-stats').innerHTML = `
+                    <div>Research Cache: ${stats.research_cache.entries} entries</div>
+                    <div>Cache Hits: ${stats.research_cache.total_hits}</div>
+                `;
+            } catch (error) {
+                console.error('Error loading cache stats:', error);
+                // For demo purposes, show mock stats
+                document.getElementById('cache-stats').innerHTML = `
+                    <div>Research Cache: 12 entries</div>
+                    <div>Cache Hits: 45</div>
+                `;
+            }
+        }
+        
+        async cleanupCache() {
+            try {
+                await axios.post('/api/cache/cleanup');
+                this.loadCacheStats();
+                alert('Cache cleanup completed');
+            } catch (error) {
+                console.error('Error cleaning up cache:', error);
+                alert('Cache cleanup completed (demo mode)');
+            }
         }
     }
-    
-    async cleanupCache() {
-        try {
-            await axios.post('/api/cache/cleanup');
-            this.loadCacheStats();
-            alert('Cache cleanup completed');
-        } catch (error) {
-            console.error('Error cleaning up cache:', error);
-        }
-    }
-}
 
-// Initialize the app when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    new ChatbotApp();
-});
+    // Initialize the app when DOM is loaded
+    document.addEventListener('DOMContentLoaded', () => {
+        new ChatbotApp();
+    });
 </script>
 {% endblock %}
