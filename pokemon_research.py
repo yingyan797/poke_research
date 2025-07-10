@@ -337,9 +337,11 @@ Your goal is to provide comprehensive, accurate, and insightful Pokemon research
                     for tool_call in message.tool_calls:
                         tool_name = tool_call.function.name
                         arguments = json.loads(tool_call.function.arguments)
-                        
+                        for rogue_arg in ["args", "kwargs"]:
+                            if rogue_arg in arguments:
+                                arguments.pop(rogue_arg)
+
                         function_call_history.append((tool_name, arguments))
-                        
                         result = self._execute_tool(tool_name, arguments)
                         
                         # Count cached calls
