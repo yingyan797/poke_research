@@ -12,11 +12,11 @@ class PokemonResearchAgent:
     
     def __init__(self, model: str = "gpt-4-turbo-preview", simulation=False):
         self._is_simulation_mode = simulation
-        self.client = OpenAI(api_key=os.getenv("C_OPENAI_KEY"))
+        # self.client = OpenAI(api_key=os.getenv("C_OPENAI_KEY"))
         self.model = model
         self.tools = []
         self.tool_functions = {}
-        self._load_pokebase_tools()
+        # self._load_pokebase_tools()
     
     def _load_pokebase_tools(self):
         """Dynamically load all functions from pokebase.loaders as OpenAI function tools"""

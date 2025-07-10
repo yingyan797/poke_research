@@ -7,7 +7,7 @@ from pokemon_research import PokemonResearchAgent as Agent_
 
 app = Flask(__name__)
 app.config['DATABASE'] = 'chatbot.db'
-app.config['ENCODER'] = SentenceTransformer("all-MiniLM-L6-v2")
+ENCODER = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Database initialization
 def init_db():
@@ -39,13 +39,14 @@ def init_db():
                 query_vector TEXT,
                 query TEXT NOT NULL,
                 results TEXT NOT NULL,
+                reasoning TEXT,
                 cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 expires_at TIMESTAMP NOT NULL,
                 access_count INTEGER DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
-            CREATE INDEX IF NOT EXISTS idx_research_cache_hash ON research_cache(query_hash);
+            CREATE INDEX IF NOT EXISTS idx_research_cache_hash ON research_cache(query_vector);
         ''')
         db.commit()
 
@@ -99,7 +100,7 @@ class ChatHistory:
         return [dict(msg) for msg in messages]
     
     @staticmethod
-    def add_message(session_id: str, role: str, content: str, metadata: Dict = None):
+    def add_message(session_id: str, role: str, content:str, reasoning, metadata: Dict = None):
         """Add a message to chat history"""
         db = get_db()
         
@@ -111,8 +112,8 @@ class ChatHistory:
         
         # Add message
         db.execute(
-            'INSERT INTO messages (session_id, role, content, metadata) VALUES (?, ?, ?, ?)',
-            (session_id, role, content, json.dumps(metadata) if metadata else None)
+            'INSERT INTO messages (session_id, role, content, reasoning, metadata) VALUES (?, ?, ?, ?, ?)',
+            (session_id, role, content, json.dumps(reasoning), json.dumps(metadata) if metadata else None)
         )
         db.commit()
     
@@ -132,15 +133,16 @@ class ResearchCache:
     @staticmethod
     def get_cached_research(query: str) -> Optional[Dict]:
         """Get cached research results"""
-        model = g["ENCODER"]
-        query_vector = model.encode([query])
 
         db = get_db()
         query_cache = db.execute(
-            'SELECT id, query_vector, query, results FROM research_cache WHERE expires_at > CURRENT_TIMESTAMP',
+            'SELECT id, query_vector, query, results, reasoning FROM research_cache WHERE expires_at > CURRENT_TIMESTAMP',
         ).fetchall()
+        if len(query_cache) == 0:
+            return
+        query_vector = torch.Tensor(ENCODER.encode([query]))
         cache_vectors = torch.Tensor([json.loads(qc['query_vector']) for qc in query_cache])
-        similarity_scores = model.similarity(query_vector, cache_vectors)
+        similarity_scores = ENCODER.similarity(query_vector, cache_vectors)
         max_score = torch.max(similarity_scores, 1)
         if max_score.values[0] >= 0.95:
             # Update access count
@@ -153,22 +155,22 @@ class ResearchCache:
             db.commit()
             
             return {
-                'results': json.loads(entry['results']),
-                'cached_at': entry['cached_at']
+                'results': entry['results'],
+                'reasoning': json.loads(entry["reasoning"])
             }
     
     @staticmethod
-    def cache_research(query: str, results, cache_hours: int = 24):
+    def cache_research(query: str, results, reasoning, cache_hours: int = 24):
         """Cache research results"""
-        query_vector = json.dumps(g["ENCODER"].encode(query)[0].numpy().tolist())
+        query_vector = json.dumps(ENCODER.encode([query])[0].tolist())
         expires_at = datetime.now() + timedelta(hours=cache_hours)
         
         db = get_db()
         db.execute(
             '''INSERT OR REPLACE INTO research_cache 
-               (query_vector, query, results, expires_at) 
+               (query_vector, query, results, reasoning, expires_at) 
                VALUES (?, ?, ?, ?, ?)''',
-            (query_vector, query, json.dumps(results), expires_at)
+            (query_vector, query, results, json.dumps(reasoning), expires_at)
         )
         db.commit()
     
@@ -201,7 +203,8 @@ class DeepResearchBot:
         # Cache results
         self.research_cache.cache_research(
             query, 
-            research_results, 
+            research_results["results"], 
+            research_results["reasoning"], 
         )
         
         research_results["use_cache"] = False
@@ -246,31 +249,29 @@ def send_message(session_id):
         return jsonify({'error': 'Message cannot be empty'}), 400
     
     # Save user message
-    ChatHistory.add_message(session_id, 'user', user_message)
+    ChatHistory.add_message(session_id, 'user', user_message, "")
     
     # Generate bot response
-    try:
-        research_result = research_bot.conduct_research(user_message)
-        bot_response = research_result['results']
-        
-        # Save bot response with metadata
-        metadata = {
-            'reasoning': research_result['reasoning'],
-            'cached': research_result['use_cache'],
-            'research_query': user_message
-        }
-        ChatHistory.add_message(session_id, 'assistant', bot_response, metadata)
-        
-        return jsonify({
-            'response': bot_response,
-            'reasoning': research_result['reasoning'],
-            'cached': research_result['use_cache']
-        })
+    # try:
+    research_result = research_bot.conduct_research(user_message)
+   
+    # Save bot response with metadata
+    metadata = {
+        'cached': research_result['use_cache'],
+        'research_query': user_message
+    }
+    ChatHistory.add_message(session_id, 'assistant', research_result['results'], research_result["reasoning"], metadata)
     
-    except Exception as e:
-        error_msg = f"I encountered an error while researching your question: {str(e)}"
-        ChatHistory.add_message(session_id, 'assistant', error_msg)
-        return jsonify({'error': error_msg}), 500
+    return jsonify({
+        'response': research_result['results'],
+        'reasoning': research_result['reasoning'],
+        'cached': research_result['use_cache']
+    })
+    
+    # except Exception as e:
+    #     error_msg = f"I encountered an error while researching your question: {str(e)}"
+    #     ChatHistory.add_message(session_id, 'assistant', error_msg)
+    #     return jsonify({'error': error_msg}), 500
 
 @app.route('/api/cache/stats', methods=['GET'])
 def cache_stats():

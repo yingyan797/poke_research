@@ -3,7 +3,7 @@
 {% block content %}
 <div class="flex h-screen">
     <!-- Sidebar -->
-    <div class="w-1/4 bg-white shadow-lg">
+    <div class="bg-white shadow-lg" style="width: 25%;">
         <div class="p-4 border-b">
             <h1 class="text-xl font-bold text-gray-800">Pokemon Research</h1>
             <button id="new-chat-btn" class="mt-2 w-full bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
@@ -13,7 +13,7 @@
         
         <div class="p-4">
             <h3 class="text-sm font-semibold text-gray-600 mb-2">Recent Chats</h3>
-            <div id="chat-list" class="space-y-2">
+            <div id="chat-list">
                 <!-- Chat sessions will be loaded here -->
             </div>
         </div>
@@ -114,10 +114,12 @@ class ChatbotApp {
         
         this.sessions.forEach(session => {
             const chatItem = document.createElement('div');
-            chatItem.className = 'p-2 bg-gray-50 rounded cursor-pointer hover:bg-gray-100';
+            chatItem.className = 'p-2 bg-green-50 rounded cursor-pointer hover:bg-green-100';
             chatItem.innerHTML = `
-                <div class="font-medium text-sm">${session.title}</div>
-                <div class="text-xs text-gray-500">${new Date(session.last_active).toLocaleDateString()}</div>
+                <textarea rows='1' style="width: 97%; font-size:small">${session.title}</textarea>
+                <div class="text-xs text-gray-500">${new Date(session.last_active).toLocaleDateString()} | 
+                    <button class="text-xs rounded hover:bg-gray-300">Save</button> | 
+                    <button class="text-xs rounded hover:bg-gray-300">Delete</button></div>
             `;
             chatItem.addEventListener('click', () => this.selectSession(session.session_id));
             chatList.appendChild(chatItem);
@@ -169,23 +171,26 @@ class ChatbotApp {
             
             const metadata = message.metadata ? JSON.parse(message.metadata) : {};
             
-            messageDiv.innerHTML = `
-                <div class="max-w-3/4 ${message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-white'} rounded-lg p-4 shadow">
-                    <div class="text-sm mb-2">${message.content}</div>
-                    ${metadata.sources && metadata.sources.length > 0 ? `
-                        <div class="text-xs mt-2 pt-2 border-t border-gray-200">
-                            <div class="font-semibold mb-1">Sources:</div>
-                            ${metadata.sources.map(url => `<a href="${url}" target="_blank" class="text-blue-600 hover:underline block">${url}</a>`).join('')}
-                            ${metadata.cached ? '<span class="text-green-600">(from cache)</span>' : ''}
-                        </div>
-                    ` : ''}
-                    ${message.role === 'user' ?  
-                        `<div class="text-xs mt-2 opacity-50">
-                            (${new Date(message.timestamp).toLocaleTimeString()})
-                        </div> ` : ''
-                    }
-                </div>
-            `;
+            messageDiv.innerHTML = "";
+            if (message.role === 'user') {
+                messageDiv.innerHTML += `
+                    <div class="max-w-3/4 bg-blue-500 text-white' rounded-lg p-4 shadow">
+                        <div class="text-sm mb-2">${message.content} 
+                        <i class="text-xs mt-2 opacity-50">
+                            (${new Date(message.timestamp).toLocaleTimeString()})</i>
+                        </div></div>
+                `
+            } else {
+                messageDiv.innerHTML += `
+                    <div class="max-w-3/4 bg-white' rounded-lg p-4 shadow">
+                    <div class="text-sm mb-2">
+                        <i style='color: blue' > ${metadata.cached ? " -  Using cached result - ": ""} </i>
+                        ${message.content}</div>
+                    <div class="text-xs mt-2 pt-2 border-t border-gray-200">${message.reasoning} </div>
+                    </div>
+                    
+                `
+            };
             
             container.appendChild(messageDiv);
         });
