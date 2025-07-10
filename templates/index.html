@@ -230,7 +230,6 @@ class ChatbotApp {
             document.getElementById('cache-stats').innerHTML = `
                 <div>Research Cache: ${stats.research_cache.entries} entries</div>
                 <div>Cache Hits: ${stats.research_cache.total_hits}</div>
-                <div>Resource Cache: ${stats.resource_cache.entries} entries</div>
             `;
         } catch (error) {
             console.error('Error loading cache stats:', error);

@@ -1,16 +1,13 @@
-import os
-import sqlite3
-import json
+import os, sqlite3, json, torch
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, g
-from werkzeug.security import generate_password_hash
-import hashlib
-import requests
 from typing import Dict, List, Optional
+from sentence_transformers import SentenceTransformer
+from pokemon_research import PokemonResearchAgent as Agent_
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-here')
 app.config['DATABASE'] = 'chatbot.db'
+app.config['ENCODER'] = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Database initialization
 def init_db():
@@ -31,6 +28,7 @@ def init_db():
                 session_id TEXT NOT NULL,
                 role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
                 content TEXT NOT NULL,
+                reasoning TEXT,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 metadata TEXT,
                 FOREIGN KEY (session_id) REFERENCES chat_sessions (session_id)
@@ -38,28 +36,16 @@ def init_db():
 
             CREATE TABLE IF NOT EXISTS research_cache (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                query_hash TEXT UNIQUE NOT NULL,
+                query_vector TEXT,
                 query TEXT NOT NULL,
                 results TEXT NOT NULL,
-                source_urls TEXT,
                 cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 expires_at TIMESTAMP NOT NULL,
                 access_count INTEGER DEFAULT 0
             );
 
-            CREATE TABLE IF NOT EXISTS resource_cache (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url TEXT UNIQUE NOT NULL,
-                content TEXT NOT NULL,
-                content_type TEXT,
-                cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                expires_at TIMESTAMP NOT NULL,
-                size INTEGER
-            );
-
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
             CREATE INDEX IF NOT EXISTS idx_research_cache_hash ON research_cache(query_hash);
-            CREATE INDEX IF NOT EXISTS idx_resource_cache_url ON resource_cache(url);
         ''')
         db.commit()
 
@@ -85,10 +71,6 @@ def generate_session_id():
     """Generate a unique session ID"""
     import uuid
     return str(uuid.uuid4())
-
-def hash_query(query: str) -> str:
-    """Generate hash for query caching"""
-    return hashlib.md5(query.lower().strip().encode()).hexdigest()
 
 class ChatHistory:
     """Manage chat history operations"""
@@ -150,42 +132,43 @@ class ResearchCache:
     @staticmethod
     def get_cached_research(query: str) -> Optional[Dict]:
         """Get cached research results"""
-        query_hash = hash_query(query)
+        model = g["ENCODER"]
+        query_vector = model.encode([query])
+
         db = get_db()
-        
-        result = db.execute(
-            'SELECT * FROM research_cache WHERE query_hash = ? AND expires_at > CURRENT_TIMESTAMP',
-            (query_hash,)
-        ).fetchone()
-        
-        if result:
+        query_cache = db.execute(
+            'SELECT id, query_vector, query, results FROM research_cache WHERE expires_at > CURRENT_TIMESTAMP',
+        ).fetchall()
+        cache_vectors = torch.Tensor([json.loads(qc['query_vector']) for qc in query_cache])
+        similarity_scores = model.similarity(query_vector, cache_vectors)
+        max_score = torch.max(similarity_scores, 1)
+        if max_score.values[0] >= 0.95:
             # Update access count
+            max_query = max_score.indices[0].item()
+            entry = query_cache[max_query]
             db.execute(
-                'UPDATE research_cache SET access_count = access_count + 1 WHERE id = ?',
-                (result['id'],)
+                'UPDATE research_cache SET access_count=access_count+1 WHERE id = ?',
+                (entry['id'],)
             )
             db.commit()
             
             return {
-                'results': json.loads(result['results']),
-                'source_urls': json.loads(result['source_urls']) if result['source_urls'] else [],
-                'cached_at': result['cached_at']
+                'results': json.loads(entry['results']),
+                'cached_at': entry['cached_at']
             }
-        return None
     
     @staticmethod
-    def cache_research(query: str, results: List[Dict], source_urls: List[str] = None, cache_hours: int = 24):
+    def cache_research(query: str, results, cache_hours: int = 24):
         """Cache research results"""
-        query_hash = hash_query(query)
+        query_vector = json.dumps(g["ENCODER"].encode(query)[0].numpy().tolist())
         expires_at = datetime.now() + timedelta(hours=cache_hours)
         
         db = get_db()
         db.execute(
             '''INSERT OR REPLACE INTO research_cache 
-               (query_hash, query, results, source_urls, expires_at) 
+               (query_vector, query, results, expires_at) 
                VALUES (?, ?, ?, ?, ?)''',
-            (query_hash, query, json.dumps(results), 
-             json.dumps(source_urls) if source_urls else None, expires_at)
+            (query_vector, query, json.dumps(results), expires_at)
         )
         db.commit()
     
@@ -194,100 +177,35 @@ class ResearchCache:
         """Remove expired cache entries"""
         db = get_db()
         db.execute('DELETE FROM research_cache WHERE expires_at < CURRENT_TIMESTAMP')
-        db.execute('DELETE FROM resource_cache WHERE expires_at < CURRENT_TIMESTAMP')
         db.commit()
 
-class ResourceCache:
-    """Manage web resource caching"""
-    
-    @staticmethod
-    def get_cached_resource(url: str) -> Optional[Dict]:
-        """Get cached web resource"""
-        db = get_db()
-        result = db.execute(
-            'SELECT * FROM resource_cache WHERE url = ? AND expires_at > CURRENT_TIMESTAMP',
-            (url,)
-        ).fetchone()
-        
-        if result:
-            return {
-                'content': result['content'],
-                'content_type': result['content_type'],
-                'cached_at': result['cached_at']
-            }
-        return None
-    
-    @staticmethod
-    def cache_resource(url: str, content: str, content_type: str = 'text/html', cache_hours: int = 6):
-        """Cache web resource"""
-        expires_at = datetime.now() + timedelta(hours=cache_hours)
-        
-        db = get_db()
-        db.execute(
-            '''INSERT OR REPLACE INTO resource_cache 
-               (url, content, content_type, expires_at, size) 
-               VALUES (?, ?, ?, ?, ?)''',
-            (url, content, content_type, expires_at, len(content))
-        )
-        db.commit()
 
 class DeepResearchBot:
     """Main chatbot class with research capabilities"""
     
     def __init__(self):
         self.research_cache = ResearchCache()
-        self.resource_cache = ResourceCache()
+        self.agent = Agent_(simulation=True)
     
     def conduct_research(self, query: str) -> Dict:
         """Conduct deep research on a query"""
         # Check cache first
         cached_result = self.research_cache.get_cached_research(query)
         if cached_result:
-            return {
-                'answer': self._generate_answer(cached_result['results']),
-                'sources': cached_result['source_urls'],
-                'cached': True
-            }
+            cached_result["use_cache"] = True
+            return cached_result
         
         # Simulate research process (replace with actual research logic)
-        research_results = self._perform_research(query)
+        research_results = self.agent.research(query)
         
         # Cache results
         self.research_cache.cache_research(
             query, 
-            research_results['results'], 
-            research_results.get('source_urls', [])
+            research_results, 
         )
         
-        return {
-            'answer': self._generate_answer(research_results['results']),
-            'sources': research_results.get('source_urls', []),
-            'cached': False
-        }
-    
-    def _perform_research(self, query: str) -> Dict:
-        """Perform actual research (placeholder for real implementation)"""
-        # This is where you'd integrate with search APIs, web scraping, etc.
-        # For now, returning mock data
-        return {
-            'results': [
-                {
-                    'title': f'Research Result for: {query}',
-                    'content': f'This is simulated research content for the query: {query}',
-                    'relevance': 0.95
-                }
-            ],
-            'source_urls': ['https://example.com/research1', 'https://example.com/research2']
-        }
-    
-    def _generate_answer(self, research_results: List[Dict]) -> str:
-        """Generate answer from research results"""
-        # Simple answer generation (replace with actual AI/NLP processing)
-        if not research_results:
-            return "I couldn't find relevant information for your query."
-        
-        content_parts = [result['content'] for result in research_results[:3]]
-        return f"Based on my research: {' '.join(content_parts)}"
+        research_results["use_cache"] = False
+        return research_results
 
 # Initialize bot
 research_bot = DeepResearchBot()
@@ -333,20 +251,20 @@ def send_message(session_id):
     # Generate bot response
     try:
         research_result = research_bot.conduct_research(user_message)
-        bot_response = research_result['answer']
+        bot_response = research_result['results']
         
         # Save bot response with metadata
         metadata = {
-            'sources': research_result['sources'],
-            'cached': research_result['cached'],
+            'reasoning': research_result['reasoning'],
+            'cached': research_result['use_cache'],
             'research_query': user_message
         }
         ChatHistory.add_message(session_id, 'assistant', bot_response, metadata)
         
         return jsonify({
             'response': bot_response,
-            'sources': research_result['sources'],
-            'cached': research_result['cached']
+            'reasoning': research_result['reasoning'],
+            'cached': research_result['use_cache']
         })
     
     except Exception as e:
@@ -363,18 +281,10 @@ def cache_stats():
         'SELECT COUNT(*) as count, SUM(access_count) as total_hits FROM research_cache'
     ).fetchone()
     
-    resource_stats = db.execute(
-        'SELECT COUNT(*) as count, SUM(size) as total_size FROM resource_cache'
-    ).fetchone()
-    
     return jsonify({
         'research_cache': {
             'entries': research_stats['count'],
             'total_hits': research_stats['total_hits'] or 0
-        },
-        'resource_cache': {
-            'entries': resource_stats['count'],
-            'total_size': resource_stats['total_size'] or 0
         }
     })
 
