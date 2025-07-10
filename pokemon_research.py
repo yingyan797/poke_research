@@ -18,6 +18,8 @@ class PokemonResearchAgent:
         self.tools = []
         self.tool_functions = {}
         self.knowledge_base = {}  # Store accumulated knowledge
+        self.function_cache = {}  # Cache for function call results
+        self.current_session_calls = set()  # Track calls made in current research session
         self._load_pokebase_tools()
     
     def _load_pokebase_tools(self):
@@ -152,7 +154,18 @@ class PokemonResearchAgent:
             return f"<{type(obj).__name__} object>"
     
     def _execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        """Execute a pokebase tool function with enhanced error handling"""
+        """Execute a pokebase tool function with caching to avoid repetition"""
+        # Create cache key from tool name and arguments
+        cache_key = f"{tool_name}_{json.dumps(arguments, sort_keys=True)}"
+        
+        # Check if we already have this result cached
+        if cache_key in self.function_cache:
+            return self.function_cache[cache_key]
+        
+        # Check if this exact call was made in current session
+        if cache_key in self.current_session_calls:
+            return f"[CACHED] This exact function call was already made in this research session. Result: {self.function_cache.get(cache_key, 'Result not found in cache')}"
+        
         try:
             if tool_name not in self.tool_functions:
                 return f"Tool {tool_name} not found"
@@ -161,19 +174,28 @@ class PokemonResearchAgent:
             result = func(**arguments)
             
             # Store result in knowledge base for future reference
-            key = f"{tool_name}_{json.dumps(arguments, sort_keys=True)}"
-            self.knowledge_base[key] = result
+            self.knowledge_base[cache_key] = result
             
             # Explore the result object recursively
-            explored_result = self._explore_object_recursively(result, max_depth=4)  # Increased depth
+            explored_result = self._explore_object_recursively(result, max_depth=4)
             
-            return json.dumps(explored_result, indent=2, default=str)
+            # Cache the result
+            result_json = json.dumps(explored_result, indent=2, default=str)
+            self.function_cache[cache_key] = result_json
+            self.current_session_calls.add(cache_key)
+            
+            return result_json
             
         except Exception as e:
             error_msg = f"Error executing {tool_name}: {str(e)}"
             # Try to provide helpful context about the error
             if "not found" in str(e).lower():
                 error_msg += f"\nSuggestion: Check if the parameter values are correct. Available arguments were: {arguments}"
+            
+            # Cache error results too to avoid repeating failed calls
+            self.function_cache[cache_key] = error_msg
+            self.current_session_calls.add(cache_key)
+            
             return error_msg
     
     def _synthesize_knowledge(self, query: str, messages: List[Dict], function_calls: List) -> str:
@@ -246,12 +268,17 @@ class PokemonResearchAgent:
         """
         Conduct Pokemon research based on user query - always returns meaningful results
         """
+        # Reset session tracking for new research query
+        self.current_session_calls.clear()
+        
         if self._is_simulation_mode:
             return {
                 "results": "Here's the result of my research based on simulated Pokemon data collection...", 
                 "reasoning": "Reasoning is provided as a sequence of pokebase function calls",
                 "success": True,
-                "iterations_used": 0
+                "iterations_used": 0,
+                "cached_calls": 0,
+                "unique_calls": 0
             }
         
         system_prompt = """You are a Pokemon research assistant with access to the pokebase library functions.
@@ -265,6 +292,9 @@ IMPORTANT INSTRUCTIONS:
 6. If you encounter errors, try alternative approaches or similar Pokemon names
 7. Always provide analysis even with partial data
 8. Use specific Pokemon names, move names, type names as they appear in the Pokemon database
+9. AVOID REPEATING THE SAME FUNCTION CALLS - if you see [CACHED] in a response, that means you already made that exact call
+10. Build upon previous results rather than repeating the same queries
+11. If you get sufficient data, proceed to analysis rather than making more calls
 
 Available functions are all from pokebase.loaders module and are prefixed with 'pokebase_'.
 
@@ -276,6 +306,7 @@ Your goal is to provide comprehensive, accurate, and insightful Pokemon research
         ]
         function_call_history = []
         final_response = None
+        cached_calls = 0
         
         for iteration in range(max_iterations):
             try:
@@ -311,6 +342,10 @@ Your goal is to provide comprehensive, accurate, and insightful Pokemon research
                         
                         result = self._execute_tool(tool_name, arguments)
                         
+                        # Count cached calls
+                        if result.startswith("[CACHED]"):
+                            cached_calls += 1
+                        
                         messages.append({
                             "tool_call_id": tool_call.id,
                             "role": "tool",
@@ -325,6 +360,9 @@ Your goal is to provide comprehensive, accurate, and insightful Pokemon research
             except Exception as e:
                 print(f"Error in iteration {iteration + 1}: {e}")
                 break
+        
+        # Calculate unique calls
+        unique_calls = len(function_call_history) - cached_calls
         
         # Always provide a meaningful response
         if final_response:
@@ -348,7 +386,10 @@ Your goal is to provide comprehensive, accurate, and insightful Pokemon research
             "reasoning": function_call_history,
             "success": success,
             "iterations_used": min(iteration + 1, max_iterations),
-            "knowledge_entries": len(self.knowledge_base)
+            "knowledge_entries": len(self.knowledge_base),
+            "cached_calls": cached_calls,
+            "unique_calls": unique_calls,
+            "efficiency_ratio": f"{unique_calls}/{len(function_call_history)}" if function_call_history else "0/0"
         }
     
     def get_research_summary(self) -> dict:
@@ -356,8 +397,16 @@ Your goal is to provide comprehensive, accurate, and insightful Pokemon research
         return {
             "total_tools_available": len(self.tools),
             "knowledge_base_size": len(self.knowledge_base),
+            "function_cache_size": len(self.function_cache),
+            "current_session_calls": len(self.current_session_calls),
             "available_tools": [tool['function']['name'] for tool in self.tools]
         }
+    
+    def clear_cache(self):
+        """Clear the function cache - useful for testing or memory management"""
+        self.function_cache.clear()
+        self.current_session_calls.clear()
+        print("Function cache cleared")
 
 def main():
     """Example usage of the Enhanced Pokemon Research Agent"""
@@ -396,7 +445,7 @@ def main():
         for i, query in enumerate(research_queries, 1):
             print(f"{i}. {query}")
         
-        user_input = input("\nEnter your Pokemon research query (or 'quit' to exit, 'summary' for session summary): ").strip()
+        user_input = input("\nEnter your Pokemon research query (or 'quit' to exit, 'summary' for session summary, 'clear' to clear cache): ").strip()
         
         if user_input.lower() in ['quit', 'exit', 'q']:
             break
@@ -406,6 +455,12 @@ def main():
             print(f"\nSession Summary:")
             print(f"- Available tools: {summary['total_tools_available']}")
             print(f"- Knowledge base entries: {summary['knowledge_base_size']}")
+            print(f"- Function cache size: {summary['function_cache_size']}")
+            print(f"- Current session calls: {summary['current_session_calls']}")
+            continue
+        
+        if user_input.lower() == 'clear':
+            agent.clear_cache()
             continue
         
         if user_input.isdigit() and 1 <= int(user_input) <= len(research_queries):
@@ -424,6 +479,9 @@ def main():
                 print(f"\nResearch Status: {'Success' if result['success'] else 'Partial'}")
                 print(f"Iterations used: {result['iterations_used']}")
                 print(f"Function calls made: {len(result['reasoning'])}")
+                print(f"Unique calls: {result['unique_calls']}")
+                print(f"Cached calls: {result['cached_calls']}")
+                print(f"Efficiency ratio: {result['efficiency_ratio']}")
                 
                 if result['reasoning']:
                     print(f"\nFunction calls executed:")

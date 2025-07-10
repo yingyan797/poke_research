@@ -1,0 +1,8 @@
+dotenv
+flask
+numpy
+torch
+sentence_transformers
+pokebase
+openai
+
