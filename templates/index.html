@@ -90,12 +90,14 @@ class ChatbotApp {
         document.getElementById('new-chat-btn').addEventListener('click', () => this.createNewChat());
         document.getElementById('send-btn').addEventListener('click', () => this.sendMessage());
         document.getElementById('cleanup-cache-btn').addEventListener('click', () => this.cleanupCache());
-        
         document.getElementById('message-input').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 this.sendMessage();
             }
         });
+
+        // Note: Event listeners for rename and delete buttons are now added in renderSessions()
+        // since they are dynamically created
     }
     
     async loadSessions() {
@@ -106,24 +108,6 @@ class ChatbotApp {
         } catch (error) {
             console.error('Error loading sessions:', error);
         }
-    }
-    
-    renderSessions() {
-        const chatList = document.getElementById('chat-list');
-        chatList.innerHTML = '';
-        
-        this.sessions.forEach(session => {
-            const chatItem = document.createElement('div');
-            chatItem.className = 'p-2 bg-green-50 rounded cursor-pointer hover:bg-green-100';
-            chatItem.innerHTML = `
-                <textarea rows='1' style="width: 97%; font-size:small">${session.title}</textarea>
-                <div class="text-xs text-gray-500">${new Date(session.last_active).toLocaleDateString()} | 
-                    <button class="text-xs rounded hover:bg-gray-300">Save</button> | 
-                    <button class="text-xs rounded hover:bg-gray-300">Delete</button></div>
-            `;
-            chatItem.addEventListener('click', () => this.selectSession(session.session_id));
-            chatList.appendChild(chatItem);
-        });
     }
     
     async createNewChat() {
@@ -137,6 +121,124 @@ class ChatbotApp {
         } catch (error) {
             console.error('Error creating new chat:', error);
         }
+    }
+
+    async renameChat(sessionId) {
+        try {
+            const titleElement = document.getElementById("title_" + sessionId);
+            if (!titleElement) {
+                console.error('Title element not found for session:', sessionId);
+                return;
+            }
+            
+            const newTitle = titleElement.value.trim();
+            if (!newTitle) {
+                alert('Please enter a valid title');
+                return;
+            }
+            
+            const response = await axios.put(`/api/sessions/${sessionId}`, {
+                title: newTitle
+            });
+            
+            // Refresh session list to show updated title
+            this.loadSessions();
+            
+            // Update chat title if this is the current session
+            if (this.currentSessionId === sessionId) {
+                document.getElementById('chat-title').textContent = newTitle;
+            }
+            
+        } catch (error) {
+            console.error('Error renaming chat:', error);
+            alert('Error renaming chat. Please try again.');
+        }
+    }
+    
+    async deleteChat(sessionId) {
+        try {
+            const confirmDelete = confirm('Are you sure you want to delete this chat?');
+            if (!confirmDelete) {
+                return;
+            }
+            
+            await axios.delete(`/api/sessions/${sessionId}`);
+            
+            // If we're deleting the current session, clear the chat area
+            if (this.currentSessionId === sessionId) {
+                this.currentSessionId = null;
+                document.getElementById('welcome-message').style.display = 'block';
+                document.getElementById('input-area').style.display = 'none';
+                document.getElementById('chat-title').textContent = 'Select a chat or start a new one';
+                document.getElementById('messages-container').innerHTML = `
+                    <div id="welcome-message" class="text-center text-gray-500 mt-20">
+                        <i class="fas fa-robot text-6xl mb-4"></i>
+                        <h3 class="text-xl font-semibold mb-2">Welcome to Pokemon Research Assistant</h3>
+                        <p>Ask me anything and I'll conduct deep research to provide you with comprehensive answers.</p>
+                    </div>
+                `;
+            }
+            
+            // Refresh session list
+            this.loadSessions();
+            
+        } catch (error) {
+            console.error('Error deleting chat:', error);
+            alert('Error deleting chat. Please try again.');
+        }
+    }
+    
+    renderSessions() {
+        const chatList = document.getElementById('chat-list');
+        chatList.innerHTML = '';
+        
+        this.sessions.forEach(session => {
+            const chatItem = document.createElement('div');
+            chatItem.className = 'p-2 bg-green-50 rounded cursor-pointer hover:bg-green-100 mb-2';
+            chatItem.innerHTML = `
+                <div class="mb-2">
+                    <textarea rows='1' style="width: 100%; font-size:small; resize: none; border: 1px solid #ddd; padding: 2px;" id='title_${session.session_id}'>${session.title}</textarea>
+                </div>
+                <div class="text-xs text-gray-500 flex justify-between items-center">
+                    <span>${new Date(session.last_active).toLocaleString()}</span>
+                    <div>
+                        <button class="text-xs px-2 py-1 bg-blue-100 rounded hover:bg-blue-200 mr-1" id="rename_${session.session_id}">Rename</button>
+                        <button class="text-xs px-2 py-1 bg-red-100 rounded hover:bg-red-200" id="del_${session.session_id}">Delete</button>
+                    </div>
+                </div>
+            `;
+            
+            // Add click event for selecting session (but not on buttons)
+            chatItem.addEventListener('click', (e) => {
+                // Don't select session if clicking on rename/delete buttons
+                if (e.target.tagName === 'BUTTON') {
+                    return;
+                }
+                this.selectSession(session.session_id);
+            });
+            
+            chatList.appendChild(chatItem);
+        });
+        
+        // Add event listeners for dynamically created buttons
+        this.sessions.forEach(session => {
+            const renameBtn = document.getElementById(`rename_${session.session_id}`);
+            const deleteBtn = document.getElementById(`del_${session.session_id}`);
+            
+            if (renameBtn) {
+                renameBtn.addEventListener('click', (e) => {
+                    e.stopPropagation(); // Prevent session selection
+                    this.renameChat(session.session_id);
+                });
+            }
+            
+            if (deleteBtn) {
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation(); // Prevent session selection
+                    this.deleteChat(session.session_id);
+                });
+            }
+        });
     }
     
     async selectSession(sessionId) {
@@ -184,7 +286,7 @@ class ChatbotApp {
                 messageDiv.innerHTML += `
                     <div class="max-w-3/4 bg-white' rounded-lg p-4 shadow">
                     <div class="text-sm mb-2">
-                        <i style='color: blue' > ${metadata.cached ? " -  Using cached result - ": ""} </i>
+                        <i style='color: blue; cursor:help' title='Original question: ${metadata.cached_query}'> ${metadata.cached_query ? " -  Using cached result - ": ""} </i>
                         ${message.content}</div>
                     <div class="text-xs mt-2 pt-2 border-t border-gray-200">${message.reasoning} </div>
                     </div>

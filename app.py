@@ -89,14 +89,35 @@ class ChatHistory:
         return session_id
     
     @staticmethod
+    def rename_session(session_id, title: str) -> str:
+        """Create a new chat session"""
+        db = get_db()
+        db.execute(
+            'Update chat_sessions Set title = ? Where session_id = ?',
+            (title, session_id)
+        )
+        db.commit()
+        return session_id
+    
+    @staticmethod
+    def del_session(session_id) -> str:
+        """Create a new chat session"""
+        db = get_db()
+        db.execute(
+            'Delete From chat_sessions Where session_id = ?',
+            (session_id,)
+        )
+        db.commit()
+        return session_id
+    
+    @staticmethod
     def get_session_history(session_id: str) -> List[Dict]:
         """Get chat history for a session"""
         db = get_db()
         messages = db.execute(
             'SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp',
             (session_id,)
-        ).fetchall()
-        
+        ).fetchall()        
         return [dict(msg) for msg in messages]
     
     @staticmethod
@@ -155,6 +176,7 @@ class ResearchCache:
             db.commit()
             
             return {
+                'cached_query': entry['query'],
                 'results': entry['results'],
                 'reasoning': json.loads(entry["reasoning"])
             }
@@ -187,14 +209,13 @@ class DeepResearchBot:
     
     def __init__(self):
         self.research_cache = ResearchCache()
-        self.agent = Agent_(simulation=True)
+        self.agent = Agent_(simulation=False)
     
     def conduct_research(self, query: str) -> Dict:
         """Conduct deep research on a query"""
         # Check cache first
         cached_result = self.research_cache.get_cached_research(query)
         if cached_result:
-            cached_result["use_cache"] = True
             return cached_result
         
         # Simulate research process (replace with actual research logic)
@@ -207,7 +228,7 @@ class DeepResearchBot:
             research_results["reasoning"], 
         )
         
-        research_results["use_cache"] = False
+        research_results["cached_query"] = ""
         return research_results
 
 # Initialize bot
@@ -231,6 +252,20 @@ def create_session():
     data = request.get_json()
     title = data.get('title', 'New Chat')
     session_id = ChatHistory.create_session(title)
+    return jsonify({'session_id': session_id})
+
+@app.route('/api/sessions/<session_id>', methods=['PUT'])
+def rename_session(session_id):
+    """Change chat title"""
+    data = request.get_json()
+    new_title = data.get('title')
+    session_id = ChatHistory.rename_session(session_id, new_title)
+    return jsonify({'session_id': session_id})
+
+@app.route('/api/sessions/<session_id>', methods=['DELETE'])
+def del_session(session_id):
+    """Create new chat session"""
+    session_id = ChatHistory.del_session(session_id)
     return jsonify({'session_id': session_id})
 
 @app.route('/api/sessions/<session_id>/messages', methods=['GET'])
@@ -257,7 +292,7 @@ def send_message(session_id):
    
     # Save bot response with metadata
     metadata = {
-        'cached': research_result['use_cache'],
+        'cached_query': research_result['cached_query'],
         'research_query': user_message
     }
     ChatHistory.add_message(session_id, 'assistant', research_result['results'], research_result["reasoning"], metadata)
@@ -265,7 +300,6 @@ def send_message(session_id):
     return jsonify({
         'response': research_result['results'],
         'reasoning': research_result['reasoning'],
-        'cached': research_result['use_cache']
     })
     
     # except Exception as e:
